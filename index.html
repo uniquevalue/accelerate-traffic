@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Estado Carreteras Granada</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --card-bg: #16213e;
+      --text: #eee;
+      --muted: #999;
+      --accent: #0f3460;
+      --border: #0f3460;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 1rem;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      padding: 1.5rem 0 1rem;
+    }
+
+    header h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+    }
+
+    header p {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-top: 0.3rem;
+    }
+
+    .status-time {
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+
+    .road-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.2rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      transition: border-color 0.3s;
+    }
+
+    .road-card.critical {
+      border-color: #e94560;
+    }
+
+    .road-card .emoji {
+      font-size: 2rem;
+      flex-shrink: 0;
+    }
+
+    .road-card .info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .road-card .road-name {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .road-card .road-desc {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.15rem;
+    }
+
+    .road-card .status-text {
+      font-size: 0.85rem;
+      margin-top: 0.4rem;
+      line-height: 1.4;
+    }
+
+    .road-card .detail-text {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.3rem;
+      line-height: 1.3;
+    }
+
+    .legend {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.8rem;
+    }
+
+    .legend h3 {
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 3rem 0;
+      color: var(--muted);
+    }
+
+    .loading .spinner {
+      display: inline-block;
+      width: 30px;
+      height: 30px;
+      border: 3px solid var(--border);
+      border-top-color: var(--text);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-box {
+      background: #2d1b1b;
+      border: 1px solid #e94560;
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+
+    .refresh-btn {
+      display: block;
+      margin: 1rem auto;
+      padding: 0.6rem 1.5rem;
+      background: var(--accent);
+      color: var(--text);
+      border: 1px solid #1a5276;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+
+    .refresh-btn:hover {
+      background: #1a5276;
+    }
+
+    .source-note {
+      text-align: center;
+      font-size: 0.7rem;
+      color: #666;
+      margin-top: 1rem;
+      padding-bottom: 1rem;
+    }
+
+    .source-note a {
+      color: #4a8db7;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Carreteras Granada</h1>
+      <p>Estado de cortes en tiempo real</p>
+    </header>
+    <div id="status-time" class="status-time"></div>
+    <div id="app">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p style="margin-top:0.8rem">Consultando DGT...</p>
+      </div>
+    </div>
+    <button class="refresh-btn" onclick="fetchAndRender()">Actualizar</button>
+    <div class="legend">
+      <h3>Leyenda</h3>
+      <div class="legend-item"><span>&#x26AB;</span> Negro / Corte total</div>
+      <div class="legend-item"><span>&#x1F534;</span> Rojo / Embolsamiento / Dificultad</div>
+      <div class="legend-item"><span>&#x1F7E1;</span> Amarillo / Precauci&oacute;n</div>
+      <div class="legend-item"><span>&#x1F7E2;</span> Verde / Sin incidencias</div>
+    </div>
+    <div class="source-note">
+      Datos: <a href="https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v36.xml" target="_blank">DGT National Access Point (DATEX II)</a>
+    </div>
+  </div>
+
+<script>
+const ROADS = [
+  { id: 'A-4026', name: 'A-4026', desc: 'Quéntar — Presa del embalse (CRÍTICA)', critical: true },
+  { id: 'A-4025', name: 'A-4025', desc: 'Cenes de la Vega — Quéntar', critical: false },
+  { id: 'A-4030', name: 'A-4030', desc: 'Pinos Genil — Güéjar Sierra', critical: false },
+  { id: 'A-395',  name: 'A-395',  desc: 'Granada — Sierra Nevada', critical: false },
+];
+
+// DGT DATEX II feed
+const DGT_URL = 'https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v36.xml';
+
+// CORS proxies to try (browser same-origin policy blocks direct fetch)
+const CORS_PROXIES = [
+  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url) => url, // direct attempt last
+];
+
+async function fetchXML() {
+  let lastError;
+  for (const makeUrl of CORS_PROXIES) {
+    const target = makeUrl(DGT_URL);
+    try {
+      const resp = await fetch(target, { signal: AbortSignal.timeout(20000) });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const text = await resp.text();
+      // Basic sanity: must look like XML with datex or situation content
+      if (text.length > 500 && (text.includes('situation') || text.includes('Situation') || text.includes('datex'))) {
+        return text;
+      }
+      throw new Error('Response does not look like DATEX II XML');
+    } catch (e) {
+      lastError = e;
+      continue;
+    }
+  }
+  throw lastError || new Error('No se pudo obtener datos de la DGT');
+}
+
+/**
+ * Classify severity from text clues found in a situation block.
+ * Returns { level, emoji, label }
+ */
+function classifySeverity(block) {
+  const t = block.toLowerCase();
+
+  // Black: total closure
+  if (t.includes('negro') || t.includes('corte total') || t.includes('cortada')
+      || t.includes('cerrada') || t.includes('roadclosed') || t.includes('road closed')
+      || t.includes('closedpermanently') || t.includes('roadblocked')
+      || t.includes('closure') || t.includes('cerrado')
+      || (t.includes('corte') && !t.includes('cortesía'))) {
+    return { level: 4, emoji: '\u26AB', label: 'Cerrada / Corte' };
+  }
+
+  // Red: severe difficulty
+  if (t.includes('rojo') || t.includes('embolsamiento') || t.includes('severe')
+      || t.includes('dificultad') || t.includes('congestion')
+      || t.includes('trafficjam') || t.includes('queuing')) {
+    return { level: 3, emoji: '\uD83D\uDD34', label: 'Dificultad / Retenciones' };
+  }
+
+  // Yellow: caution
+  if (t.includes('amarillo') || t.includes('precauci') || t.includes('moderate')
+      || t.includes('warning') || t.includes('obras') || t.includes('works')
+      || t.includes('reducedwidth') || t.includes('restriction')
+      || t.includes('contraflow') || t.includes('alternate')
+      || t.includes('desvío') || t.includes('desvio')
+      || t.includes('maintenance') || t.includes('mantenimiento')) {
+    return { level: 2, emoji: '\uD83D\uDFE1', label: 'Precaución' };
+  }
+
+  // Something is mentioned but unclear severity — default to yellow
+  return { level: 2, emoji: '\uD83D\uDFE1', label: 'Incidencia' };
+}
+
+/**
+ * Extract human-readable detail from a situation XML block.
+ * Tries multiple DATEX II fields.
+ */
+function extractDetails(block) {
+  const details = [];
+
+  // Try to get comment/description values
+  const commentPatterns = [
+    /<comment[^>]*>[\s\S]*?<value[^>]*>([^<]+)<\/value>/gi,
+    /<generalPublicComment[^>]*>[\s\S]*?<value[^>]*>([^<]+)<\/value>/gi,
+    /<nonGeneralPublicComment[^>]*>[\s\S]*?<value[^>]*>([^<]+)<\/value>/gi,
+  ];
+  for (const pat of commentPatterns) {
+    let m;
+    while ((m = pat.exec(block)) !== null) {
+      const v = m[1].trim();
+      if (v && !details.includes(v)) details.push(v);
+    }
+  }
+
+  // Situation record type
+  const typeMatch = block.match(/<situationRecordType[^>]*>([^<]+)</) ||
+                    block.match(/xsi:type="([^"]+)"/);
+  if (typeMatch) {
+    details.push(`Tipo: ${typeMatch[1]}`);
+  }
+
+  // Overall severity
+  const sevMatch = block.match(/<overallSeverity[^>]*>([^<]+)</);
+  if (sevMatch) {
+    details.push(`Severidad: ${sevMatch[1]}`);
+  }
+
+  // Validity status
+  const validMatch = block.match(/<validityStatus[^>]*>([^<]+)</);
+  if (validMatch) {
+    details.push(`Estado: ${validMatch[1]}`);
+  }
+
+  // Start time
+  const startMatch = block.match(/<overallStartTime[^>]*>([^<]+)</) ||
+                     block.match(/<startTime[^>]*>([^<]+)</);
+  if (startMatch) {
+    try {
+      const d = new Date(startMatch[1]);
+      details.push(`Inicio: ${d.toLocaleString('es-ES')}`);
+    } catch (_) {
+      details.push(`Inicio: ${startMatch[1]}`);
+    }
+  }
+
+  return details;
+}
+
+/**
+ * Parse the raw XML text and find incidents matching our target roads.
+ * Uses text-based search to avoid namespace complexity.
+ */
+function parseIncidents(xmlText) {
+  const results = new Map(); // roadId -> array of incidents
+
+  for (const road of ROADS) {
+    results.set(road.id, []);
+  }
+
+  // Split into situation blocks. DATEX II wraps each incident in <situation> tags
+  // Handle both namespaced and non-namespaced variants
+  const situationPattern = /<(?:[\w]+:)?situation[\s>][\s\S]*?<\/(?:[\w]+:)?situation>/gi;
+  const blocks = xmlText.match(situationPattern) || [];
+
+  for (const block of blocks) {
+    for (const road of ROADS) {
+      // Check if this block references our road
+      // Road IDs may appear in various elements: roadNumber, roadName, locationDescriptor, etc.
+      // Also check for the ID without the hyphen (A4026) and with spaces
+      const variants = [
+        road.id,                           // A-4026
+        road.id.replace('-', ''),          // A4026
+        road.id.replace('-', ' '),         // A 4026
+      ];
+
+      const found = variants.some(v => block.includes(v));
+      if (found) {
+        const severity = classifySeverity(block);
+        const details = extractDetails(block);
+        results.get(road.id).push({ severity, details });
+      }
+    }
+  }
+
+  // If no situations found, also try splitting by situationRecord
+  if (blocks.length === 0) {
+    const recordPattern = /<(?:[\w]+:)?situationRecord[\s>][\s\S]*?<\/(?:[\w]+:)?situationRecord>/gi;
+    const records = xmlText.match(recordPattern) || [];
+    for (const block of records) {
+      for (const road of ROADS) {
+        const variants = [road.id, road.id.replace('-', ''), road.id.replace('-', ' ')];
+        if (variants.some(v => block.includes(v))) {
+          const severity = classifySeverity(block);
+          const details = extractDetails(block);
+          results.get(road.id).push({ severity, details });
+        }
+      }
+    }
+  }
+
+  // Last resort: scan the entire XML for road mentions line by line
+  if ([...results.values()].every(arr => arr.length === 0)) {
+    for (const road of ROADS) {
+      const variants = [road.id, road.id.replace('-', ''), road.id.replace('-', ' ')];
+      if (variants.some(v => xmlText.includes(v))) {
+        // Road is mentioned somewhere — extract a snippet around it
+        const idx = xmlText.indexOf(road.id) !== -1
+          ? xmlText.indexOf(road.id)
+          : xmlText.indexOf(road.id.replace('-', ''));
+        const snippet = xmlText.substring(Math.max(0, idx - 500), idx + 500);
+        const severity = classifySeverity(snippet);
+        const details = extractDetails(snippet);
+        results.get(road.id).push({ severity, details });
+      }
+    }
+  }
+
+  return results;
+}
+
+function render(results, error) {
+  const app = document.getElementById('app');
+  const timeEl = document.getElementById('status-time');
+
+  const now = new Date();
+  timeEl.textContent = `Última consulta: ${now.toLocaleString('es-ES')}`;
+
+  if (error) {
+    app.innerHTML = `<div class="error-box">${error}</div>`;
+    // Still render all roads as unknown
+    let html = app.innerHTML;
+    for (const road of ROADS) {
+      html += renderCard(road, []);
+    }
+    app.innerHTML = html;
+    return;
+  }
+
+  let html = '';
+  for (const road of ROADS) {
+    const incidents = results.get(road.id) || [];
+    html += renderCard(road, incidents);
+  }
+  app.innerHTML = html;
+}
+
+function renderCard(road, incidents) {
+  let emoji, statusText, detailHtml = '';
+
+  if (incidents.length === 0) {
+    emoji = '\uD83D\uDFE2'; // green
+    statusText = 'Sin incidencias registradas';
+  } else {
+    // Pick the worst severity
+    incidents.sort((a, b) => b.severity.level - a.severity.level);
+    const worst = incidents[0].severity;
+    emoji = worst.emoji;
+    statusText = worst.label;
+    if (incidents.length > 1) {
+      statusText += ` (${incidents.length} incidencias)`;
+    }
+
+    // Collect unique details
+    const allDetails = [];
+    for (const inc of incidents) {
+      for (const d of inc.details) {
+        if (!allDetails.includes(d)) allDetails.push(d);
+      }
+    }
+    if (allDetails.length > 0) {
+      detailHtml = `<div class="detail-text">${allDetails.join('<br>')}</div>`;
+    }
+  }
+
+  return `
+    <div class="road-card ${road.critical ? 'critical' : ''}">
+      <div class="emoji">${emoji}</div>
+      <div class="info">
+        <div class="road-name">${road.name}</div>
+        <div class="road-desc">${road.desc}</div>
+        <div class="status-text">${statusText}</div>
+        ${detailHtml}
+      </div>
+    </div>`;
+}
+
+async function fetchAndRender() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="loading">
+      <div class="spinner"></div>
+      <p style="margin-top:0.8rem">Consultando DGT...</p>
+    </div>`;
+
+  try {
+    const xml = await fetchXML();
+    const results = parseIncidents(xml);
+    render(results, null);
+  } catch (e) {
+    console.error('Error fetching DGT data:', e);
+    render(new Map(), `Error al obtener datos: ${e.message}. Reintente en unos segundos.`);
+  }
+}
+
+// Auto-refresh every 5 minutes
+fetchAndRender();
+setInterval(fetchAndRender, 5 * 60 * 1000);
+</script>
+</body>
+</html>
