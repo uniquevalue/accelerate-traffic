@@ -200,6 +200,7 @@
       <div class="legend-item"><span>&#x1F534;</span> Rojo / Embolsamiento / Dificultad</div>
       <div class="legend-item"><span>&#x1F7E1;</span> Amarillo / Precauci&oacute;n</div>
       <div class="legend-item"><span>&#x1F7E2;</span> Verde / Sin incidencias</div>
+      <div class="legend-item"><span>&#x26AA;</span> Sin datos / Error de conexi&oacute;n</div>
     </div>
     <div class="source-note">
       Datos: <a href="https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v36.xml" target="_blank">DGT National Access Point (DATEX II)</a>
@@ -218,31 +219,51 @@ const ROADS = [
 const DGT_URL = 'https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v36.xml';
 
 // CORS proxies to try (browser same-origin policy blocks direct fetch)
+// Each entry: { makeUrl, json } — json means response is JSON-wrapped in .contents
 const CORS_PROXIES = [
-  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  (url) => url, // direct attempt last
+  { makeUrl: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, json: true },
+  { makeUrl: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, json: false },
+  { makeUrl: (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`, json: false },
+  { makeUrl: (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`, json: false },
+  { makeUrl: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`, json: false },
+  { makeUrl: (u) => u, json: false }, // direct attempt last
 ];
 
+function looksLikeDatexXML(text) {
+  return text.length > 500 &&
+    (text.includes('situation') || text.includes('Situation') ||
+     text.includes('datex') || text.includes('DATEX') ||
+     text.includes('d2LogicalModel') || text.includes('payload'));
+}
+
 async function fetchXML() {
-  let lastError;
-  for (const makeUrl of CORS_PROXIES) {
-    const target = makeUrl(DGT_URL);
+  const errors = [];
+  for (const proxy of CORS_PROXIES) {
+    const target = proxy.makeUrl(DGT_URL);
     try {
-      const resp = await fetch(target, { signal: AbortSignal.timeout(20000) });
+      const resp = await fetch(target, { signal: AbortSignal.timeout(15000) });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const text = await resp.text();
-      // Basic sanity: must look like XML with datex or situation content
-      if (text.length > 500 && (text.includes('situation') || text.includes('Situation') || text.includes('datex'))) {
+
+      let text;
+      if (proxy.json) {
+        const data = await resp.json();
+        text = data.contents || '';
+      } else {
+        text = await resp.text();
+      }
+
+      if (looksLikeDatexXML(text)) {
+        console.log('DGT data fetched via:', target.substring(0, 60));
         return text;
       }
       throw new Error('Response does not look like DATEX II XML');
     } catch (e) {
-      lastError = e;
+      errors.push(`${target.substring(0, 50)}... → ${e.message}`);
       continue;
     }
   }
-  throw lastError || new Error('No se pudo obtener datos de la DGT');
+  console.error('All proxies failed:', errors);
+  throw new Error('No se pudo conectar con la DGT. Todos los proxies fallaron.');
 }
 
 /**
@@ -416,20 +437,13 @@ function render(results, error) {
   const now = new Date();
   timeEl.textContent = `Última consulta: ${now.toLocaleString('es-ES')}`;
 
+  let html = '';
   if (error) {
-    app.innerHTML = `<div class="error-box">${error}</div>`;
-    // Still render all roads as unknown
-    let html = app.innerHTML;
-    for (const road of ROADS) {
-      html += renderCard(road, []);
-    }
-    app.innerHTML = html;
-    return;
+    html += `<div class="error-box">${error}</div>`;
   }
 
-  let html = '';
   for (const road of ROADS) {
-    const incidents = results.get(road.id) || [];
+    const incidents = error ? null : (results.get(road.id) || []);
     html += renderCard(road, incidents);
   }
   app.innerHTML = html;
@@ -438,7 +452,11 @@ function render(results, error) {
 function renderCard(road, incidents) {
   let emoji, statusText, detailHtml = '';
 
-  if (incidents.length === 0) {
+  if (incidents === null) {
+    // Fetch failed — unknown state
+    emoji = '\u26AA'; // white circle
+    statusText = 'Sin datos — no se pudo consultar';
+  } else if (incidents.length === 0) {
     emoji = '\uD83D\uDFE2'; // green
     statusText = 'Sin incidencias registradas';
   } else {
