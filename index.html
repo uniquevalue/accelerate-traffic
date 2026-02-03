@@ -196,10 +196,10 @@
     <button class="refresh-btn" onclick="fetchAndRender()">Actualizar</button>
     <div class="legend">
       <h3>Leyenda</h3>
-      <div class="legend-item"><span>&#x26AB;</span> Negro / Corte total</div>
-      <div class="legend-item"><span>&#x1F534;</span> Rojo / Embolsamiento / Dificultad</div>
-      <div class="legend-item"><span>&#x1F7E1;</span> Amarillo / Precauci&oacute;n</div>
-      <div class="legend-item"><span>&#x1F7E2;</span> Verde / Sin incidencias</div>
+      <div class="legend-item"><span>&#x1F534;</span> Cerrada / Corte total</div>
+      <div class="legend-item"><span>&#x1F7E0;</span> Dificultad / Retenciones</div>
+      <div class="legend-item"><span>&#x1F7E1;</span> Precauci&oacute;n / Obras</div>
+      <div class="legend-item"><span>&#x1F7E2;</span> Sin incidencias</div>
       <div class="legend-item"><span>&#x26AA;</span> Sin datos / Error de conexi&oacute;n</div>
     </div>
     <div class="source-note">
@@ -273,20 +273,20 @@ async function fetchXML() {
 function classifySeverity(block) {
   const t = block.toLowerCase();
 
-  // Black: total closure
+  // Red: total closure
   if (t.includes('negro') || t.includes('corte total') || t.includes('cortada')
       || t.includes('cerrada') || t.includes('roadclosed') || t.includes('road closed')
       || t.includes('closedpermanently') || t.includes('roadblocked')
       || t.includes('closure') || t.includes('cerrado')
       || (t.includes('corte') && !t.includes('cortesía'))) {
-    return { level: 4, emoji: '\u26AB', label: 'Cerrada / Corte' };
+    return { level: 4, emoji: '\uD83D\uDD34', label: 'Cerrada / Corte' };
   }
 
-  // Red: severe difficulty
+  // Orange: severe difficulty
   if (t.includes('rojo') || t.includes('embolsamiento') || t.includes('severe')
       || t.includes('dificultad') || t.includes('congestion')
       || t.includes('trafficjam') || t.includes('queuing')) {
-    return { level: 3, emoji: '\uD83D\uDD34', label: 'Dificultad / Retenciones' };
+    return { level: 3, emoji: '\uD83D\uDFE0', label: 'Dificultad / Retenciones' };
   }
 
   // Yellow: caution
@@ -309,49 +309,69 @@ function classifySeverity(block) {
  */
 function extractDetails(block) {
   const details = [];
+  const addUnique = (v) => { if (v && !details.includes(v)) details.push(v); };
 
-  // Try to get comment/description values
+  // Comments and descriptions (free text from DGT operators)
   const commentPatterns = [
-    /<comment[^>]*>[\s\S]*?<value[^>]*>([^<]+)<\/value>/gi,
-    /<generalPublicComment[^>]*>[\s\S]*?<value[^>]*>([^<]+)<\/value>/gi,
-    /<nonGeneralPublicComment[^>]*>[\s\S]*?<value[^>]*>([^<]+)<\/value>/gi,
+    /<(?:[\w]+:)?generalPublicComment[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
+    /<(?:[\w]+:)?comment[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
+    /<(?:[\w]+:)?nonGeneralPublicComment[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
   ];
   for (const pat of commentPatterns) {
     let m;
+    while ((m = pat.exec(block)) !== null) addUnique(m[1].trim());
+  }
+
+  // Alternative route / diversion info (DATEX II ReroutingManagement)
+  const divPatterns = [
+    /<(?:[\w]+:)?reroutingItineraryDescription[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
+    /<(?:[\w]+:)?alternativeRoute[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
+    /<(?:[\w]+:)?diversion[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
+    /<(?:[\w]+:)?adviceDescription[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
+    /<(?:[\w]+:)?recommendedItinerary[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
+  ];
+  for (const pat of divPatterns) {
+    let m;
     while ((m = pat.exec(block)) !== null) {
       const v = m[1].trim();
-      if (v && !details.includes(v)) details.push(v);
+      if (v) addUnique(`Ruta alternativa: ${v}`);
     }
   }
 
-  // Situation record type
-  const typeMatch = block.match(/<situationRecordType[^>]*>([^<]+)</) ||
-                    block.match(/xsi:type="([^"]+)"/);
-  if (typeMatch) {
-    details.push(`Tipo: ${typeMatch[1]}`);
+  // Cause description
+  const causePatterns = [
+    /<(?:[\w]+:)?causeDescription[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/gi,
+    /<(?:[\w]+:)?causeType[^>]*>([^<]+)/gi,
+  ];
+  for (const pat of causePatterns) {
+    let m;
+    while ((m = pat.exec(block)) !== null) addUnique(`Causa: ${m[1].trim()}`);
   }
 
-  // Overall severity
-  const sevMatch = block.match(/<overallSeverity[^>]*>([^<]+)</);
-  if (sevMatch) {
-    details.push(`Severidad: ${sevMatch[1]}`);
-  }
+  // Location description text
+  const locDesc = block.match(/<(?:[\w]+:)?locationDescription[\s\S]*?<(?:[\w]+:)?value[^>]*>([^<]+)/i);
+  if (locDesc) addUnique(locDesc[1].trim());
 
-  // Validity status
-  const validMatch = block.match(/<validityStatus[^>]*>([^<]+)</);
-  if (validMatch) {
-    details.push(`Estado: ${validMatch[1]}`);
-  }
+  // Road name if present (gives context beyond the road number)
+  const roadName = block.match(/<(?:[\w]+:)?roadName[^>]*>([^<]+)/i);
+  if (roadName) addUnique(roadName[1].trim());
 
-  // Start time
-  const startMatch = block.match(/<overallStartTime[^>]*>([^<]+)</) ||
-                     block.match(/<startTime[^>]*>([^<]+)</);
+  // Validity period
+  const startMatch = block.match(/<(?:[\w]+:)?overallStartTime[^>]*>([^<]+)/) ||
+                     block.match(/<(?:[\w]+:)?startTime[^>]*>([^<]+)/);
+  const endMatch = block.match(/<(?:[\w]+:)?overallEndTime[^>]*>([^<]+)/) ||
+                   block.match(/<(?:[\w]+:)?endTime[^>]*>([^<]+)/);
   if (startMatch) {
     try {
       const d = new Date(startMatch[1]);
-      details.push(`Inicio: ${d.toLocaleString('es-ES')}`);
+      let timeStr = `Desde: ${d.toLocaleString('es-ES')}`;
+      if (endMatch) {
+        const e = new Date(endMatch[1]);
+        timeStr += ` — Hasta: ${e.toLocaleString('es-ES')}`;
+      }
+      addUnique(timeStr);
     } catch (_) {
-      details.push(`Inicio: ${startMatch[1]}`);
+      addUnique(`Desde: ${startMatch[1]}`);
     }
   }
 
